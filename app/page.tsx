@@ -431,7 +431,7 @@ export default function Home() {
                   {/* 검색 결과 정보 */}
                   {searchQuery && (
                     <div className="text-sm text-muted-foreground">
-                      "{searchQuery}" 검색 결과: {filteredAndSortedSheets.length}개 시트
+                      &quot;{searchQuery}&quot; 검색 결과: {filteredAndSortedSheets.length}개 시트
                     </div>
                   )}
                   {/* 시트 목록 */}
