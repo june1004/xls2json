@@ -7,8 +7,20 @@ const nextConfig = {
       config.resolve.fallback = {
         ...config.resolve.fallback,
         fs: false,
+        path: false,
+        crypto: false,
       }
     }
+    
+    // 서버 사이드에서 클라이언트 전용 라이브러리 제외
+    if (isServer) {
+      config.externals = config.externals || []
+      config.externals.push({
+        mammoth: 'commonjs mammoth',
+        turndown: 'commonjs turndown',
+      })
+    }
+    
     return config
   },
 }
