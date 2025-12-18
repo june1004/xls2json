@@ -6,11 +6,14 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { convertDocxToMarkdown, parseChatToMarkdown, downloadMarkdown } from '@/lib/markdown-converter'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { convertDocxToMarkdown, parseChatToMarkdown, downloadMarkdown, downloadAsWord, downloadAsPDF } from '@/lib/markdown-converter'
 import { downloadFilesAsZip } from '@/lib/excel-converter'
 import { Progress } from '@/components/ui/progress'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter'
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism'
 import { SaveOptions } from '@/components/save-options'
 
 interface ConvertedFile {
@@ -28,8 +31,11 @@ export function MarkdownConverter() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [convertedFiles, setConvertedFiles] = useState<ConvertedFile[]>([])
   const [batchProgress, setBatchProgress] = useState<{ current: number; total: number } | null>(null)
+  const [downloadFormat, setDownloadFormat] = useState<'md' | 'word' | 'pdf'>('md')
+  const [isDownloading, setIsDownloading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const previewRef = useRef<HTMLDivElement>(null)
 
   const MAX_FILES = 10
 
@@ -182,11 +188,34 @@ export function MarkdownConverter() {
     }
   }
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!convertedMarkdown) return
 
+    setIsDownloading(true)
     const fileName = sourceFileName || `chat_${new Date().getTime()}`
-    downloadMarkdown(convertedMarkdown, fileName)
+
+    try {
+      if (downloadFormat === 'md') {
+        downloadMarkdown(convertedMarkdown, fileName)
+      } else if (downloadFormat === 'word') {
+        await downloadAsWord(convertedMarkdown, fileName)
+      } else if (downloadFormat === 'pdf') {
+        // PDF 다운로드를 위해 미리보기 요소의 ID 설정
+        const previewId = 'markdown-preview-pdf'
+        if (previewRef.current) {
+          previewRef.current.id = previewId
+          // 스크롤을 맨 위로 이동
+          previewRef.current.scrollTop = 0
+        }
+        // 렌더링 대기
+        await new Promise(resolve => setTimeout(resolve, 300))
+        await downloadAsPDF(convertedMarkdown, fileName, previewId)
+      }
+    } catch (error) {
+      setError('다운로드 중 오류가 발생했습니다: ' + (error as Error).message)
+    } finally {
+      setIsDownloading(false)
+    }
   }
 
   const handleReset = () => {
@@ -404,12 +433,32 @@ export function MarkdownConverter() {
                   <div>줄 수: {convertedMarkdown.split('\n').length}줄</div>
                 </div>
                 <div className="flex gap-2">
+                  <Select value={downloadFormat} onValueChange={(value: 'md' | 'word' | 'pdf') => setDownloadFormat(value)}>
+                    <SelectTrigger className="w-[140px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="md">Markdown (.md)</SelectItem>
+                      <SelectItem value="word">Word (.docx)</SelectItem>
+                      <SelectItem value="pdf">PDF (.pdf)</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <Button
                     onClick={handleDownload}
                     size="sm"
+                    disabled={isDownloading}
                   >
-                    <Download className="mr-2 h-3 w-3" />
-                    다운로드
+                    {isDownloading ? (
+                      <>
+                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                        다운로드 중...
+                      </>
+                    ) : (
+                      <>
+                        <Download className="mr-2 h-3 w-3" />
+                        다운로드
+                      </>
+                    )}
                   </Button>
                   <Button
                     onClick={handleReset}
@@ -435,51 +484,96 @@ export function MarkdownConverter() {
                 </TabsList>
                 
                 <TabsContent value="preview" className="mt-4">
-                  <div className="border rounded-lg p-6 bg-background min-h-[400px] max-h-[600px] overflow-auto">
+                  <div ref={previewRef} className="border rounded-lg p-6 bg-background min-h-[400px] max-h-[600px] overflow-auto">
                     <div className="prose prose-sm dark:prose-invert max-w-none">
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
                         components={{
-                          h1: ({ node, ...props }) => <h1 className="text-3xl font-bold mt-6 mb-4 border-b pb-2" {...props} />,
-                          h2: ({ node, ...props }) => <h2 className="text-2xl font-bold mt-5 mb-3 border-b pb-2" {...props} />,
-                          h3: ({ node, ...props }) => <h3 className="text-xl font-bold mt-4 mb-2" {...props} />,
-                          p: ({ node, ...props }) => <p className="mb-4 leading-relaxed" {...props} />,
+                          h1: ({ node, ...props }) => (
+                            <h1 className="text-3xl font-bold mt-6 mb-4 pb-2 border-b border-border" {...props} />
+                          ),
+                          h2: ({ node, ...props }) => (
+                            <h2 className="text-2xl font-bold mt-5 mb-3 pb-2 border-b border-border" {...props} />
+                          ),
+                          h3: ({ node, ...props }) => (
+                            <h3 className="text-xl font-bold mt-4 mb-2" {...props} />
+                          ),
+                          h4: ({ node, ...props }) => (
+                            <h4 className="text-lg font-semibold mt-3 mb-2" {...props} />
+                          ),
+                          p: ({ node, ...props }) => (
+                            <p className="mb-4 leading-relaxed text-foreground" {...props} />
+                          ),
                           code: ({ node, inline, className, children, ...props }: any) => {
+                            const match = /language-(\w+)/.exec(className || '')
+                            const language = match ? match[1] : ''
+                            
                             if (inline) {
                               return (
-                                <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
+                                <code className="bg-muted px-1.5 py-0.5 rounded text-sm font-mono text-foreground" {...props}>
                                   {children}
                                 </code>
                               )
                             }
+                            
                             return (
-                              <code className={className} {...props}>
-                                {children}
-                              </code>
+                              <SyntaxHighlighter
+                                style={vscDarkPlus}
+                                language={language || 'text'}
+                                PreTag="div"
+                                className="rounded-lg !mt-0 !mb-4"
+                                customStyle={{
+                                  margin: 0,
+                                  borderRadius: '0.5rem',
+                                }}
+                                {...props}
+                              >
+                                {String(children).replace(/\n$/, '')}
+                              </SyntaxHighlighter>
                             )
                           },
-                          pre: ({ node, children, ...props }: any) => (
-                            <pre className="bg-muted p-4 rounded-lg text-sm font-mono overflow-x-auto mb-4" {...props}>
-                              {children}
-                            </pre>
+                          pre: ({ node, children, ...props }: any) => {
+                            // code 컴포넌트에서 SyntaxHighlighter를 사용하므로 pre는 그대로 전달
+                            return <div {...props}>{children}</div>
+                          },
+                          ul: ({ node, ...props }) => (
+                            <ul className="list-disc list-inside mb-4 space-y-2 ml-4" {...props} />
                           ),
-                          ul: ({ node, ...props }) => <ul className="list-disc list-inside mb-4 space-y-2" {...props} />,
-                          ol: ({ node, ...props }) => <ol className="list-decimal list-inside mb-4 space-y-2" {...props} />,
-                          li: ({ node, ...props }) => <li className="ml-4" {...props} />,
+                          ol: ({ node, ...props }) => (
+                            <ol className="list-decimal list-inside mb-4 space-y-2 ml-4" {...props} />
+                          ),
+                          li: ({ node, ...props }) => (
+                            <li className="ml-2 text-foreground" {...props} />
+                          ),
                           blockquote: ({ node, ...props }) => (
-                            <blockquote className="border-l-4 border-primary pl-4 italic my-4 bg-muted/30 py-2" {...props} />
+                            <blockquote 
+                              className="border-l-4 border-primary pl-4 italic my-4 bg-muted/30 py-2 text-foreground/80" 
+                              {...props} 
+                            />
                           ),
-                          a: ({ node, ...props }) => <a className="text-primary hover:underline font-medium" {...props} />,
+                          a: ({ node, ...props }) => (
+                            <a className="text-primary hover:underline font-medium" {...props} />
+                          ),
                           table: ({ node, ...props }) => (
                             <div className="overflow-x-auto my-4">
                               <table className="min-w-full border-collapse border border-border" {...props} />
                             </div>
                           ),
-                          th: ({ node, ...props }) => <th className="border border-border p-3 bg-muted font-semibold text-left" {...props} />,
-                          td: ({ node, ...props }) => <td className="border border-border p-3" {...props} />,
-                          hr: ({ node, ...props }) => <hr className="my-6 border-border" {...props} />,
-                          strong: ({ node, ...props }) => <strong className="font-bold" {...props} />,
-                          em: ({ node, ...props }) => <em className="italic" {...props} />,
+                          th: ({ node, ...props }) => (
+                            <th className="border border-border p-3 bg-muted font-semibold text-left" {...props} />
+                          ),
+                          td: ({ node, ...props }) => (
+                            <td className="border border-border p-3" {...props} />
+                          ),
+                          hr: ({ node, ...props }) => (
+                            <hr className="my-6 border-border" {...props} />
+                          ),
+                          strong: ({ node, ...props }) => (
+                            <strong className="font-bold text-foreground" {...props} />
+                          ),
+                          em: ({ node, ...props }) => (
+                            <em className="italic" {...props} />
+                          ),
                         }}
                       >
                         {convertedMarkdown}

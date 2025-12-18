@@ -275,3 +275,5 @@ export function generateObsidianFileName(originalName: string): string {
     .substring(0, 100) // 최대 길이 제한
 }
 
+
+
